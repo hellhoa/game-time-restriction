@@ -1,0 +1,32 @@
+blob:
+  server:
+    port: '6124'
+taskmanager:
+  memory:
+    process:
+      size: 4096Mb
+  numberOfTaskSlots: 8
+heartbeat:
+  timeout: 5000
+  interval: 1000
+rest:
+  flamegraph:
+    enabled: true
+jobmanager:
+  rpc:
+    address: jobmanager
+  memory:
+    process:
+      size: 2048Mb
+state:
+  savepoints:
+    dir: file:///tmp/flink-savepoints-directory
+  backend: filesystem
+  checkpoints:
+    dir: file:///tmp/flink-checkpoints-directory
+web:
+  backpressure:
+    refresh-interval: 10000
+query:
+  server:
+    port: '6125'

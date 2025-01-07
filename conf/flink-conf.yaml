@@ -1,0 +1,15 @@
+blob.server.port: 6124
+taskmanager.memory.process.size: 2048m
+heartbeat.timeout: 5000
+rest.flamegraph.enabled: true
+jobmanager.rpc.address: jobmanager
+jobmanager.memory.process.size: 2048m
+state.savepoints.dir: file:///tmp/flink-savepoints-directory
+heartbeat.interval: 1000
+web.backpressure.refresh-interval: 10000
+query.server.port: 6125
+taskmanager.memory.flink.size: 1600m
+parallelism.default: 1
+taskmanager.numberOfTaskSlots: 2
+state.backend: filesystem
+state.checkpoints.dir: file:///tmp/flink-checkpoints-directory

@@ -1,0 +1,175 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.2
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+
+  kafka-broker:
+    image: confluentinc/cp-kafka:7.3.2
+    hostname: kafka-broker
+    container_name: kafka-broker
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-broker:9093,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+
+  kafka-producer:
+    build: 
+      context: ./kafka-producer
+      dockerfile: Dockerfile
+    container_name: kafka-producer
+    depends_on:
+      - kafka-broker
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-broker:9093
+
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka-broker:9093
+      - KAFKA_CLUSTERS_0_ZOOKEEPER=zookeeper:2181
+    depends_on:
+      - kafka-broker
+      - zookeeper
+
+  kafka-topic-creator:
+    image: confluentinc/cp-kafka:7.3.2
+    container_name: kafka-topic-creator
+    depends_on:
+      - kafka-broker
+    volumes:
+      - ./create-topics.sh:/create-topics.sh
+    entrypoint: ["/bin/sh", "/create-topics.sh"]
+
+
+  # TimescaleDB
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    container_name: timescaledb
+    environment:
+      - POSTGRES_DB=gamedb
+      - POSTGRES_USER=gameuser
+      - POSTGRES_PASSWORD=gamepassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./timescaledb/data:/var/lib/postgresql/data
+      - ./timescaledb/init:/docker-entrypoint-initdb.d
+
+  # Redis Caching Layer
+  redis:
+    image: redis:6.2-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis/data:/data
+
+
+  # FastAPI Application
+  fastapi-app:
+    build: 
+      context: ./fastapi-app
+      dockerfile: Dockerfile
+    container_name: fastapi-app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - timescaledb
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://gameuser:gamepassword@timescaledb:5432/gamedb
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - API_V1_STR=/api/v1
+      - PROJECT_NAME=Game Time Restriction API
+      - LOG_LEVEL=INFO
+
+  # Flink Processor
+  jobmanager:
+    image: apache/flink:1.19.0-scala_2.12-java11
+    container_name: jobmanager
+    ports:
+      - "8081:8081"
+    command: "jobmanager start-foreground"
+    volumes:
+      - ./conf:/opt/flink/conf
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-broker:9093
+      - TIMESCALEDB_URL=jdbc:postgresql://timescaledb:5432/gamedb
+      - DB_USERNAME=gameuser
+      - DB_PASSWORD=gamepassword
+      - JOB_MANAGER_RPC_ADDRESS=jobmanager
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        jobmanager.memory.process.size: 4096m
+        parallelism.default: 1
+
+    
+  taskmanager:
+    image: apache/flink:1.19.0-scala_2.12-java11
+    container_name: taskmanager
+    depends_on:
+      - jobmanager
+    command: "taskmanager start-foreground"
+    volumes:
+      - ./conf:/opt/flink/conf
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-broker:9093
+      - TIMESCALEDB_URL=jdbc:postgresql://timescaledb:5432/gamedb
+      - DB_USERNAME=gameuser
+      - DB_PASSWORD=gamepassword
+      - JOB_MANAGER_RPC_ADDRESS=jobmanager
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        taskmanager.memory.process.size: 8192m
+        taskmanager.memory.flink.size: 4096m
+        parallelism.default: 1
+
+
+  flink-processor:
+    build: 
+      context: ./flink-game-processor
+      dockerfile: Dockerfile
+    container_name: flink-processor
+    volumes:
+      - ./conf:/opt/flink/conf
+    depends_on:
+      - kafka-broker
+      - timescaledb
+      - redis
+      - jobmanager
+      - taskmanager
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-broker:9093
+      - TIMESCALEDB_URL=jdbc:postgresql://timescaledb:5432/gamedb
+      - DB_USERNAME=gameuser
+      - DB_PASSWORD=gamepassword
+      - JOB_MANAGER_RPC_ADDRESS=jobmanager
+
